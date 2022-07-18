@@ -33,6 +33,7 @@ import (
 	failurepb "go.temporal.io/api/failure/v1"
 	historypb "go.temporal.io/api/history/v1"
 	taskqueuepb "go.temporal.io/api/taskqueue/v1"
+	updatepb "go.temporal.io/api/update/v1"
 	workflowpb "go.temporal.io/api/workflow/v1"
 
 	"go.temporal.io/server/api/historyservice/v1"
@@ -723,6 +724,53 @@ func (b *HistoryBuilder) AddUpsertWorkflowSearchAttributesEvent(
 			WorkflowTaskCompletedEventId: workflowTaskCompletedEventID,
 			SearchAttributes:             command.SearchAttributes,
 		},
+	}
+
+	return b.appendEvents(event)
+}
+
+func (b *HistoryBuilder) AddWorkflowUpdateRequestedEvent(
+	requestID string,
+	update *updatepb.WorkflowUpdate,
+	updateID string,
+	// cmdAttrs *commandpb.CompleteWorkflowUpdateCommandAttributes,
+) *historypb.HistoryEvent {
+	event := b.createNewHistoryEvent(enumspb.EVENT_TYPE_WORKFLOW_UPDATE_REQUESTED, b.timeSource.Now())
+	event.Attributes = &historypb.HistoryEvent_WorkflowUpdateRequestedEventAttributes{
+		WorkflowUpdateRequestedEventAttributes: &historypb.WorkflowUpdateRequestedEventAttributes{
+			Header:    nil,
+			RequestId: requestID,
+			UpdateId:  updateID,
+			Update:    update,
+		},
+	}
+
+	return b.appendEvents(event)
+}
+
+func (b *HistoryBuilder) AddWorkflowUpdateCompletedEvent(
+	cmdAttrs *commandpb.CompleteWorkflowUpdateCommandAttributes,
+) *historypb.HistoryEvent {
+
+	eventAttrs := &historypb.WorkflowUpdateCompletedEventAttributes{
+		SystemHeader: nil,
+		UpdateId:     cmdAttrs.UpdateId,
+	}
+
+	if cmdAttrs.GetSuccess() != nil {
+		eventAttrs.Result = &historypb.WorkflowUpdateCompletedEventAttributes_Success{
+			Success: cmdAttrs.GetSuccess(),
+		}
+	}
+	if cmdAttrs.GetFailure() != nil {
+		eventAttrs.Result = &historypb.WorkflowUpdateCompletedEventAttributes_Failure{
+			Failure: cmdAttrs.GetFailure(),
+		}
+	}
+
+	event := b.createNewHistoryEvent(enumspb.EVENT_TYPE_WORKFLOW_UPDATE_COMPLETED, b.timeSource.Now())
+	event.Attributes = &historypb.HistoryEvent_WorkflowUpdateCompletedEventAttributes{
+		WorkflowUpdateCompletedEventAttributes: eventAttrs,
 	}
 
 	return b.appendEvents(event)

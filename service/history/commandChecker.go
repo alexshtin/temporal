@@ -505,6 +505,32 @@ func (v *commandAttrValidator) validateSignalExternalWorkflowExecutionAttributes
 	return enumspb.WORKFLOW_TASK_FAILED_CAUSE_UNSPECIFIED, nil
 }
 
+func (v *commandAttrValidator) validateCompleteWorkflowUpdateAttributes(
+	namespaceID namespace.ID,
+	cmdAttrs *commandpb.CompleteWorkflowUpdateCommandAttributes,
+) (enumspb.WorkflowTaskFailedCause, error) {
+
+	const failedCause = enumspb.WORKFLOW_TASK_FAILED_CAUSE_BAD_SIGNAL_WORKFLOW_EXECUTION_ATTRIBUTES
+
+	if cmdAttrs == nil {
+		return failedCause, serviceerror.NewInvalidArgument("SignalExternalWorkflowExecutionCommandAttributes is not set on command.")
+	}
+	if cmdAttrs.GetSuccess() == nil && cmdAttrs.GetFailure() == nil {
+		return failedCause, serviceerror.NewInvalidArgument("Both success and failure are nil on command.")
+	}
+	if cmdAttrs.GetSuccess() != nil && cmdAttrs.GetFailure() != nil {
+		return failedCause, serviceerror.NewInvalidArgument("Both success and failure are not nil on command.")
+	}
+	if cmdAttrs.GetUpdateId() == "" {
+		return failedCause, serviceerror.NewInvalidArgument("UpdateId is not set on command.")
+	}
+	if cmdAttrs.GetDurabilityPreference() == enumspb.WORKFLOW_UPDATE_DURABILITY_PREFERENCE_UNSPECIFIED {
+		return failedCause, serviceerror.NewInvalidArgument("Durability preferences is not set on command.")
+	}
+
+	return enumspb.WORKFLOW_TASK_FAILED_CAUSE_UNSPECIFIED, nil
+}
+
 func (v *commandAttrValidator) validateUpsertWorkflowSearchAttributes(
 	namespace namespace.Name,
 	attributes *commandpb.UpsertWorkflowSearchAttributesCommandAttributes,

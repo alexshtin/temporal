@@ -217,6 +217,7 @@ func (c *ContextImpl) Clear() {
 	c.metricsClient.IncCounter(metrics.WorkflowContextScope, metrics.WorkflowContextCleared)
 	if c.MutableState != nil {
 		c.MutableState.GetQueryRegistry().Clear()
+		c.MutableState.GetUpdateRegistry().Clear()
 	}
 	c.MutableState = nil
 	c.stats = &persistencespb.ExecutionStats{

@@ -38,6 +38,7 @@ import (
 	historypb "go.temporal.io/api/history/v1"
 	"go.temporal.io/api/serviceerror"
 	taskqueuepb "go.temporal.io/api/taskqueue/v1"
+	updatepb "go.temporal.io/api/update/v1"
 	workflowpb "go.temporal.io/api/workflow/v1"
 	"go.temporal.io/api/workflowservice/v1"
 	"golang.org/x/exp/maps"
@@ -48,6 +49,7 @@ import (
 	"go.temporal.io/server/api/historyservice/v1"
 	persistencespb "go.temporal.io/server/api/persistence/v1"
 	workflowspb "go.temporal.io/server/api/workflow/v1"
+	"go.temporal.io/server/service/history/workflow/update"
 
 	"go.temporal.io/server/common"
 	"go.temporal.io/server/common/backoff"
@@ -170,6 +172,7 @@ type (
 		taskGenerator       TaskGenerator
 		workflowTaskManager *workflowTaskStateMachine
 		QueryRegistry       QueryRegistry
+		UpdateRegistry      update.Registry
 
 		shard           shard.Context
 		clusterMetadata cluster.Metadata
@@ -228,7 +231,8 @@ func NewMutableState(
 		appliedEvents:    make(map[string]struct{}),
 		InsertTasks:      make(map[tasks.Category][]tasks.Task),
 
-		QueryRegistry: NewQueryRegistry(),
+		QueryRegistry:  NewQueryRegistry(),
+		UpdateRegistry: update.NewRegistry(),
 
 		shard:           shard,
 		clusterMetadata: shard.GetClusterMetadata(),
@@ -600,6 +604,10 @@ func (e *MutableStateImpl) GetWorkflowType() *commonpb.WorkflowType {
 
 func (e *MutableStateImpl) GetQueryRegistry() QueryRegistry {
 	return e.QueryRegistry
+}
+
+func (e *MutableStateImpl) GetUpdateRegistry() update.Registry {
+	return e.UpdateRegistry
 }
 
 func (e *MutableStateImpl) GetActivityScheduledEvent(
@@ -1307,6 +1315,10 @@ func (e *MutableStateImpl) ClearTransientWorkflowTask() error {
 
 func (e *MutableStateImpl) HasBufferedEvents() bool {
 	return e.hBuilder.HasBufferEvents()
+}
+
+func (e *MutableStateImpl) HasTransientUpdate() bool {
+	return e.GetUpdateRegistry().Transient() != nil
 }
 
 // DeleteWorkflowTask deletes a workflow task.
@@ -2796,6 +2808,53 @@ func (e *MutableStateImpl) ReplicateUpsertWorkflowSearchAttributesEvent(
 	currentSearchAttr := e.GetExecutionInfo().SearchAttributes
 
 	e.executionInfo.SearchAttributes = mergeMapOfPayload(currentSearchAttr, upsertSearchAttr)
+}
+
+func (e *MutableStateImpl) AddWorkflowUpdateRequestedEvent(
+	requestID string,
+	update *updatepb.WorkflowUpdate,
+	updateID string,
+	// cmdAttrs *commandpb.CompleteWorkflowUpdateCommandAttributes,
+) (*historypb.HistoryEvent, error) {
+
+	opTag := tag.WorkflowActionUpsertWorkflowSearchAttributes
+	if err := e.checkMutability(opTag); err != nil {
+		return nil, err
+	}
+
+	event := e.hBuilder.AddWorkflowUpdateRequestedEvent(requestID, update, updateID)
+	e.ReplicateWorkflowUpdateRequestedEvent(event)
+	return event, nil
+}
+
+func (e *MutableStateImpl) ReplicateWorkflowUpdateRequestedEvent(
+	event *historypb.HistoryEvent,
+) {
+
+	// eventAttrs := event.GetUpdateWorkflowRequestedEventAttributes()
+	// TODO?
+}
+
+func (e *MutableStateImpl) AddWorkflowUpdateCompletedEvent(
+	cmdAttrs *commandpb.CompleteWorkflowUpdateCommandAttributes,
+) (*historypb.HistoryEvent, error) {
+
+	opTag := tag.WorkflowActionUpsertWorkflowSearchAttributes
+	if err := e.checkMutability(opTag); err != nil {
+		return nil, err
+	}
+
+	event := e.hBuilder.AddWorkflowUpdateCompletedEvent(cmdAttrs)
+	e.ReplicateWorkflowUpdateCompletedEvent(event)
+	return event, nil
+}
+
+func (e *MutableStateImpl) ReplicateWorkflowUpdateCompletedEvent(
+	event *historypb.HistoryEvent,
+) {
+
+	// eventAttrs := event.GetUpdateWorkflowCompletedEventAttributes()
+	// TODO?
 }
 
 func mergeMapOfPayload(

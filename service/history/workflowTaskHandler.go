@@ -225,6 +225,9 @@ func (handler *workflowTaskHandlerImpl) handleCommand(ctx context.Context, comma
 	case enumspb.COMMAND_TYPE_UPSERT_WORKFLOW_SEARCH_ATTRIBUTES:
 		return nil, handler.handleCommandUpsertWorkflowSearchAttributes(ctx, command.GetUpsertWorkflowSearchAttributesCommandAttributes())
 
+	case enumspb.COMMAND_TYPE_COMPLETE_WORKFLOW_UPDATE:
+		return nil, handler.handleCommandCompleteWorkflowUpdate(ctx, command.GetCompleteWorkflowUpdateCommandAttributes())
+
 	default:
 		return nil, serviceerror.NewInvalidArgument(fmt.Sprintf("Unknown command type: %v", command.GetCommandType()))
 	}
@@ -1062,6 +1065,74 @@ func (handler *workflowTaskHandlerImpl) handleCommandUpsertWorkflowSearchAttribu
 		handler.workflowTaskCompletedID, attr,
 	)
 	return err
+}
+
+func (handler *workflowTaskHandlerImpl) handleCommandCompleteWorkflowUpdate(
+	_ context.Context,
+	cmdAttrs *commandpb.CompleteWorkflowUpdateCommandAttributes,
+) error {
+
+	handler.metricsClient.IncCounter(
+		metrics.HistoryRespondWorkflowTaskCompletedScope,
+		metrics.CommandTypeSignalExternalWorkflowCounter,
+	)
+
+	updateRegistry := handler.mutableState.GetUpdateRegistry()
+	if updateRegistry.Len() == 0 {
+		return nil
+	}
+
+	executionInfo := handler.mutableState.GetExecutionInfo()
+	nsID := namespace.ID(executionInfo.GetNamespaceId())
+	// nsName, err := handler.namespaceRegistry.GetNamespaceName(nsID)
+	// if err != nil {
+	// 	return err
+	// }
+
+	if err := handler.validateCommandAttr(
+		func() (enumspb.WorkflowTaskFailedCause, error) {
+			return handler.attrValidator.validateCompleteWorkflowUpdateAttributes(
+				nsID,
+				cmdAttrs,
+			)
+		},
+	); err != nil || handler.stopProcessing {
+		return err
+	}
+
+	failWorkflow, err := handler.sizeLimitChecker.failWorkflowIfPayloadSizeExceedsLimit(
+		metrics.CommandTypeTag(enumspb.COMMAND_TYPE_COMPLETE_WORKFLOW_UPDATE.String()),
+		cmdAttrs.GetResult().Size(),
+		"CompleteWorkflowUpdateCommandAttributes.Result exceeds size limit.",
+	)
+	if err != nil || failWorkflow {
+		handler.stopProcessing = true
+		return err
+	}
+
+	transientUpdate := updateRegistry.Transient()
+	if transientUpdate != nil && transientUpdate.ID() == cmdAttrs.GetUpdateId() {
+		_, err = handler.mutableState.AddWorkflowUpdateRequestedEvent(transientUpdate.RequestID(), transientUpdate.Update(), transientUpdate.ID())
+		if err != nil {
+			return err
+		}
+		_, err = handler.mutableState.AddWorkflowUpdateCompletedEvent(cmdAttrs)
+		if err != nil {
+			return err
+		}
+		transientUpdate.SendResult(cmdAttrs.GetSuccess(), cmdAttrs.GetFailure())
+	}
+
+	pendingUpdate := updateRegistry.Pending(cmdAttrs.GetUpdateId())
+	if pendingUpdate != nil {
+		_, err = handler.mutableState.AddWorkflowUpdateCompletedEvent(cmdAttrs)
+		if err != nil {
+			return err
+		}
+		pendingUpdate.SendResult(cmdAttrs.GetSuccess(), cmdAttrs.GetFailure())
+	}
+
+	return nil
 }
 
 func searchAttributesSize(fields map[string]*commonpb.Payload) int {

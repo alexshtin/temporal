@@ -27,6 +27,7 @@ package history
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"sync/atomic"
 	"time"
@@ -1969,11 +1970,126 @@ func (e *historyEngineImpl) SignalWithStartWorkflowExecution(
 	}, nil
 }
 
-func (h *historyEngineImpl) UpdateWorkflow(
+func (e *historyEngineImpl) UpdateWorkflow(
 	ctx context.Context,
 	request *historyservice.UpdateWorkflowRequest,
-) (*historyservice.UpdateWorkflowResponse, error) {
-	return nil, serviceerror.NewUnimplemented("UpdateWorkflow is not supported on this server")
+) (_ *historyservice.UpdateWorkflowResponse, retErr error) {
+
+	scope := e.metricsClient.Scope(metrics.HistoryQueryWorkflowScope)
+	namespaceID := namespace.ID(request.GetNamespaceId())
+	err := validateNamespaceUUID(namespaceID)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(request.Request.WorkflowExecution.RunId) == 0 {
+		request.Request.WorkflowExecution.RunId, err = e.workflowConsistencyChecker.GetCurrentRunID(
+			ctx,
+			request.NamespaceId,
+			request.Request.WorkflowExecution.WorkflowId,
+		)
+		if err != nil {
+			return nil, err
+		}
+	}
+	workflowKey := definition.NewWorkflowKey(
+		request.NamespaceId,
+		request.Request.WorkflowExecution.WorkflowId,
+		request.Request.WorkflowExecution.RunId,
+	)
+	weCtx, err := e.workflowConsistencyChecker.GetWorkflowContext(
+		ctx,
+		nil,
+		api.BypassMutableStateConsistencyPredicate,
+		workflowKey,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { weCtx.GetReleaseFn()(retErr) }()
+
+	ms := weCtx.GetMutableState()
+	if !ms.IsWorkflowExecutionRunning() {
+		return nil, consts.ErrWorkflowCompleted
+	}
+
+	if !ms.HasProcessedOrPendingWorkflowTask() {
+		// workflow has no workflow task ever scheduled, this usually is due to firstWorkflowTaskBackoff (cron / retry)
+		// in this case, don't buffer the query, because it is almost certain the query will time out.
+		return nil, consts.ErrWorkflowTaskNotScheduled
+	}
+
+	// If we get here it means query could not be dispatched through matching directly, so it must block
+	// until either an result has been obtained on a workflow task response or until it is safe to dispatch directly through matching.
+	sw := scope.StartTimer(metrics.WorkflowTaskQueryLatency)
+	defer sw.Stop()
+	updateReg := ms.GetUpdateRegistry()
+	if updateReg.Len() >= e.config.MaxBufferedQueryCount() {
+		scope.IncCounter(metrics.QueryBufferExceededCount)
+		return nil, consts.ErrConsistentQueryBufferExceeded
+	}
+
+	req := request.GetRequest()
+	u, removeFn, existingTransient := updateReg.Add(req.GetUpdate(), req.GetRequestId(), e.timeSource.Now())
+	defer removeFn()
+
+	if existingTransient != nil {
+		// Dont buffer this one, write it as non-buffered before WTSc/St
+		_, err = ms.AddWorkflowUpdateRequestedEvent(existingTransient.RequestID(), existingTransient.Update(), existingTransient.ID())
+		// This one goes to buffer
+		_, err = ms.AddWorkflowUpdateRequestedEvent(req.GetRequestId(), req.GetUpdate(), u.ID())
+	} else {
+		if !u.Transient() {
+			// This one goes to buffer if there is WT in flight
+			_, err = ms.AddWorkflowUpdateRequestedEvent(req.GetRequestId(), req.GetUpdate(), u.ID())
+		}
+	}
+
+	if u.Transient() {
+		// Create a transfer task to schedule a workflow task
+		if !ms.HasPendingWorkflowTask() {
+			// This wont actually add event but will create WT which will get transient events
+			if _, err := ms.AddWorkflowTaskScheduledEvent(false); err != nil {
+				return nil, err
+			}
+		}
+	} else {
+		err = api.UpdateWorkflowWithNew(e.shard, ctx, weCtx,
+			func(weCtx api.WorkflowContext) (*api.UpdateWorkflowAction, error) {
+				// to save all history updates
+				// and create WT
+				return &api.UpdateWorkflowAction{
+					CreateWorkflowTask: true,
+				}, nil
+			}, nil)
+	}
+
+	weCtx.GetReleaseFn()(nil)
+	select {
+	case result := <-u.ResultCh():
+		if result.Success != nil {
+			return &historyservice.UpdateWorkflowResponse{
+				Response: &workflowservice.UpdateWorkflowResponse{
+					Result: &workflowservice.UpdateWorkflowResponse_Success{
+						Success: result.Success,
+					},
+				},
+			}, nil
+		}
+		if result.Failure != nil {
+			return &historyservice.UpdateWorkflowResponse{
+				Response: &workflowservice.UpdateWorkflowResponse{
+					Result: &workflowservice.UpdateWorkflowResponse_Failure{
+						Failure: result.Failure,
+					},
+				},
+			}, nil
+		}
+		return nil, errors.New("both success and failure are nil") // TODO: better error
+	case <-ctx.Done():
+		scope.IncCounter(metrics.ConsistentQueryTimeoutCount)
+		return nil, ctx.Err()
+	}
 }
 
 // RemoveSignalMutableState remove the signal request id in signal_requested for deduplicate
