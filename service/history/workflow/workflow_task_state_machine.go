@@ -392,7 +392,8 @@ func (m *workflowTaskStateMachine) AddWorkflowTaskStartedEvent(
 	startedEventID := scheduledEventID + 1
 	startTime := m.ms.timeSource.Now()
 	// First check to see if new events came since transient workflowTask was scheduled
-	if (workflowTask.Attempt > 1 || m.ms.HasTransientUpdate()) && (workflowTask.ScheduledEventID != m.ms.GetNextEventID() || workflowTask.Version != m.ms.GetCurrentVersion()) {
+	if (workflowTask.Attempt > 1 && (workflowTask.ScheduledEventID != m.ms.GetNextEventID() || workflowTask.Version != m.ms.GetCurrentVersion())) &&
+		!m.ms.HasTransientUpdate() {
 		// Also create a new WorkflowTaskScheduledEvent since new events came in when it was scheduled
 		scheduledEvent := m.ms.hBuilder.AddWorkflowTaskScheduledEvent(
 			taskQueue,
