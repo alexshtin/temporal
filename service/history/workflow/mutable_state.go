@@ -189,7 +189,6 @@ type (
 		HasTransientWorkflowTask() bool
 		ClearTransientWorkflowTask() error
 		HasBufferedEvents() bool
-		HasTransientUpdate() bool
 		HasInFlightWorkflowTask() bool
 		HasParentExecution() bool
 		HasPendingWorkflowTask() bool

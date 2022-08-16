@@ -488,7 +488,10 @@ func (handler *workflowTaskHandlerCallbacksImpl) handleWorkflowTaskCompleted(
 		newStateBuilder = nil
 	}
 
-	createNewWorkflowTask := msBuilder.IsWorkflowExecutionRunning() && (hasUnhandledEvents || request.GetForceCreateNewWorkflowTask() || activityNotStartedCancelled)
+	transientUpdate := msBuilder.GetUpdateRegistry().Transient()
+	hasPendingTransientUpdate := transientUpdate != nil && transientUpdate.ScheduledWorkflowTaskEventID() == common.EmptyEventID
+
+	createNewWorkflowTask := msBuilder.IsWorkflowExecutionRunning() && (hasUnhandledEvents || request.GetForceCreateNewWorkflowTask() || activityNotStartedCancelled || hasPendingTransientUpdate)
 	var newWorkflowTaskScheduledEventID int64
 	if createNewWorkflowTask {
 		bypassTaskGeneration := request.GetReturnNewWorkflowTask() && wtFailedCause == nil
@@ -504,6 +507,10 @@ func (handler *workflowTaskHandlerCallbacksImpl) handleWorkflowTaskCompleted(
 		}
 		if err != nil {
 			return nil, err
+		}
+
+		if hasPendingTransientUpdate {
+			transientUpdate.SetScheduledWorkflowTaskEventID(newWorkflowTask.ScheduledEventID)
 		}
 
 		newWorkflowTaskScheduledEventID = newWorkflowTask.ScheduledEventID

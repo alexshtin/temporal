@@ -90,7 +90,7 @@ func (r *registryImpl) Add(update *updatepb.WorkflowUpdate, requestID string, re
 
 	r.Lock()
 	defer r.Unlock()
-	isTransient := len(r.updates) == 0 // && we want to skip persistence
+	isTransient := len(r.updates) == 0 // && skipPersistence flag is true
 	u := newUpdate(update, requestID, requestTime, isTransient)
 	currentTransient := r.transientNoLock()
 	if currentTransient != nil {

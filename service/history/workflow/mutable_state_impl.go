@@ -1317,10 +1317,6 @@ func (e *MutableStateImpl) HasBufferedEvents() bool {
 	return e.hBuilder.HasBufferEvents()
 }
 
-func (e *MutableStateImpl) HasTransientUpdate() bool {
-	return e.GetUpdateRegistry().Transient() != nil
-}
-
 // DeleteWorkflowTask deletes a workflow task.
 func (e *MutableStateImpl) DeleteWorkflowTask() {
 	e.workflowTaskManager.DeleteWorkflowTask()

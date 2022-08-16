@@ -31,17 +31,20 @@ import (
 	commonpb "go.temporal.io/api/common/v1"
 	failurepb "go.temporal.io/api/failure/v1"
 	updatepb "go.temporal.io/api/update/v1"
+
+	"go.temporal.io/server/common"
 )
 
 type (
 	Update struct {
-		id          string
-		requestID   string
-		requestTime time.Time
-		transient   bool
-		update      *updatepb.WorkflowUpdate
-		resultCh    chan *Result
-		unblockCh   chan struct{}
+		id                           string
+		requestID                    string
+		requestTime                  time.Time
+		transient                    bool
+		scheduledWorkflowTaskEventID int64
+		update                       *updatepb.WorkflowUpdate
+		resultCh                     chan *Result
+		unblockCh                    chan struct{}
 	}
 
 	Result struct {
@@ -53,13 +56,14 @@ type (
 
 func newUpdate(update *updatepb.WorkflowUpdate, requestID string, requestTime time.Time, isTransient bool) *Update {
 	return &Update{
-		id:          uuid.New(),
-		requestID:   requestID,
-		requestTime: requestTime,
-		transient:   isTransient,
-		update:      update,
-		resultCh:    make(chan *Result),
-		unblockCh:   make(chan struct{}),
+		id:                           uuid.New(),
+		requestID:                    requestID,
+		requestTime:                  requestTime,
+		transient:                    isTransient,
+		scheduledWorkflowTaskEventID: common.EmptyEventID,
+		update:                       update,
+		resultCh:                     make(chan *Result),
+		unblockCh:                    make(chan struct{}),
 	}
 }
 
@@ -99,4 +103,11 @@ func (u *Update) RequestTime() *time.Time {
 
 func (u *Update) Transient() bool {
 	return u.transient
+}
+
+func (u *Update) SetScheduledWorkflowTaskEventID(scheduledWorkflowTaskEventID int64) {
+	u.scheduledWorkflowTaskEventID = scheduledWorkflowTaskEventID
+}
+func (u *Update) ScheduledWorkflowTaskEventID() int64 {
+	return u.scheduledWorkflowTaskEventID
 }

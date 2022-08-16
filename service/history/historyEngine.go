@@ -2034,25 +2034,39 @@ func (e *historyEngineImpl) UpdateWorkflow(
 	defer removeFn()
 
 	if existingTransient != nil {
-		// Dont buffer this one, write it as non-buffered before WTSc/St
+		// Don't buffer this one, write it as non-buffered before WTSc/St
 		_, err = ms.AddWorkflowUpdateRequestedEvent(existingTransient.RequestID(), existingTransient.Update(), existingTransient.ID())
+		if err != nil {
+			return nil, err
+		}
 		// This one goes to buffer
 		_, err = ms.AddWorkflowUpdateRequestedEvent(req.GetRequestId(), req.GetUpdate(), u.ID())
+		if err != nil {
+			return nil, err
+		}
 	} else {
 		if !u.Transient() {
 			// This one goes to buffer if there is WT in flight
-			_, err = ms.AddWorkflowUpdateRequestedEvent(req.GetRequestId(), req.GetUpdate(), u.ID())
+			_, err := ms.AddWorkflowUpdateRequestedEvent(req.GetRequestId(), req.GetUpdate(), u.ID())
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 
 	if u.Transient() {
 		// Create a transfer task to schedule a workflow task
 		if !ms.HasPendingWorkflowTask() {
-			// This wont actually add event but will create WT which will get transient events
-			if _, err := ms.AddWorkflowTaskScheduledEvent(false); err != nil {
+			// This won't actually add event but will create WT which will get transient events
+			wt, err := ms.AddWorkflowTaskScheduledEvent(false)
+			if err != nil {
 				return nil, err
 			}
+			u.SetScheduledWorkflowTaskEventID(wt.ScheduledEventID)
+		} else {
+			// If WT is already scheduled, don't use this one but wait for another one
 		}
+
 	} else {
 		err = api.UpdateWorkflowWithNew(e.shard, ctx, weCtx,
 			func(weCtx api.WorkflowContext) (*api.UpdateWorkflowAction, error) {

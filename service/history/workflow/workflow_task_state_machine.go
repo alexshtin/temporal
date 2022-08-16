@@ -286,7 +286,7 @@ func (m *workflowTaskStateMachine) AddWorkflowTaskScheduledEventAsHeartbeat(
 	scheduledTime := m.ms.timeSource.Now().UTC()
 	attempt := m.ms.executionInfo.WorkflowTaskAttempt
 	startToCloseTimeout := m.getStartToCloseTimeout(m.ms.executionInfo.DefaultWorkflowTaskTimeout, attempt)
-	if attempt == 1 && !m.ms.HasTransientUpdate() {
+	if attempt == 1 && m.ms.GetUpdateRegistry().Transient() != nil {
 		newWorkflowTaskEvent = m.ms.hBuilder.AddWorkflowTaskScheduledEvent(
 			taskQueue,
 			startToCloseTimeout,
@@ -297,7 +297,7 @@ func (m *workflowTaskStateMachine) AddWorkflowTaskScheduledEventAsHeartbeat(
 		scheduledTime = timestamp.TimeValue(newWorkflowTaskEvent.GetEventTime())
 	}
 
-	if m.ms.HasTransientUpdate() {
+	if m.ms.GetUpdateRegistry().Transient() != nil {
 		scheduledEventID++
 	}
 
@@ -391,9 +391,13 @@ func (m *workflowTaskStateMachine) AddWorkflowTaskStartedEvent(
 	scheduledEventID = workflowTask.ScheduledEventID
 	startedEventID := scheduledEventID + 1
 	startTime := m.ms.timeSource.Now()
+
+	transientUpdate := m.ms.GetUpdateRegistry().Transient()
+	hasTransientUpdateForCurrentWT := transientUpdate != nil && transientUpdate.ScheduledWorkflowTaskEventID() == workflowTask.ScheduledEventID
+
 	// First check to see if new events came since transient workflowTask was scheduled
 	if (workflowTask.Attempt > 1 && (workflowTask.ScheduledEventID != m.ms.GetNextEventID() || workflowTask.Version != m.ms.GetCurrentVersion())) &&
-		!m.ms.HasTransientUpdate() {
+		!hasTransientUpdateForCurrentWT {
 		// Also create a new WorkflowTaskScheduledEvent since new events came in when it was scheduled
 		scheduledEvent := m.ms.hBuilder.AddWorkflowTaskScheduledEvent(
 			taskQueue,
@@ -406,7 +410,7 @@ func (m *workflowTaskStateMachine) AddWorkflowTaskStartedEvent(
 	}
 
 	// Avoid creating new history events when workflow tasks are continuously failing
-	if workflowTask.Attempt == 1 && !m.ms.HasTransientUpdate() {
+	if workflowTask.Attempt == 1 && !hasTransientUpdateForCurrentWT {
 		// Now create WorkflowTaskStartedEvent
 		event = m.ms.hBuilder.AddWorkflowTaskStartedEvent(
 			scheduledEventID,
@@ -699,9 +703,10 @@ func (m *workflowTaskStateMachine) CreateTransientWorkflowTaskEvents(
 
 	var historySuffix []*historypb.HistoryEvent
 
-	updateRegistry := m.ms.GetUpdateRegistry()
-	transientUpdate := updateRegistry.Transient()
-	if transientUpdate != nil {
+	transientUpdate := m.ms.GetUpdateRegistry().Transient()
+	hasTransientUpdateForCurrentWT := transientUpdate != nil && transientUpdate.ScheduledWorkflowTaskEventID() == workflowTask.ScheduledEventID
+
+	if hasTransientUpdateForCurrentWT {
 		updateRequestedEvent := &historypb.HistoryEvent{
 			EventId:   workflowTask.ScheduledEventID - 1,
 			EventTime: transientUpdate.RequestTime(),
@@ -720,7 +725,7 @@ func (m *workflowTaskStateMachine) CreateTransientWorkflowTaskEvents(
 	}
 
 	var transientWorkflowTask *historyspb.TransientWorkflowTaskInfo
-	if workflowTask.Attempt > 1 || transientUpdate != nil {
+	if workflowTask.Attempt > 1 || hasTransientUpdateForCurrentWT {
 		// This workflowTask is retried from mutable state
 		// Also return schedule and started which are not written to history yet
 		scheduledEvent := &historypb.HistoryEvent{
