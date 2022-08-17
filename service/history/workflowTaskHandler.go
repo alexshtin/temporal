@@ -229,7 +229,7 @@ func (handler *workflowTaskHandlerImpl) handleCommand(ctx context.Context, comma
 		return nil, handler.handleCommandCompleteWorkflowUpdate(ctx, command.GetCompleteWorkflowUpdateCommandAttributes())
 
 	default:
-		return nil, serviceerror.NewInvalidArgument(fmt.Sprintf("Unknown command type: %v", command.GetCommandType()))
+		return nil, serviceerror.NewInvalidArgument(fmt.Sprintf("unknown command type: %v", command.GetCommandType()))
 	}
 }
 

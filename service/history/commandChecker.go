@@ -833,7 +833,8 @@ func (v *commandAttrValidator) validateCommandSequence(
 			enumspb.COMMAND_TYPE_REQUEST_CANCEL_EXTERNAL_WORKFLOW_EXECUTION,
 			enumspb.COMMAND_TYPE_SIGNAL_EXTERNAL_WORKFLOW_EXECUTION,
 			enumspb.COMMAND_TYPE_START_CHILD_WORKFLOW_EXECUTION,
-			enumspb.COMMAND_TYPE_UPSERT_WORKFLOW_SEARCH_ATTRIBUTES:
+			enumspb.COMMAND_TYPE_UPSERT_WORKFLOW_SEARCH_ATTRIBUTES,
+			enumspb.COMMAND_TYPE_COMPLETE_WORKFLOW_UPDATE:
 			// noop
 		case enumspb.COMMAND_TYPE_CONTINUE_AS_NEW_WORKFLOW_EXECUTION,
 			enumspb.COMMAND_TYPE_COMPLETE_WORKFLOW_EXECUTION,
@@ -841,7 +842,7 @@ func (v *commandAttrValidator) validateCommandSequence(
 			enumspb.COMMAND_TYPE_CANCEL_WORKFLOW_EXECUTION:
 			closeCommand = command.GetCommandType()
 		default:
-			return serviceerror.NewInvalidArgument(fmt.Sprintf("unknown command type: %v", command.GetCommandType()))
+			return serviceerror.NewInvalidArgument(fmt.Sprintf("unable to validate command sequience: unknown command type: %v", command.GetCommandType()))
 		}
 	}
 	return nil

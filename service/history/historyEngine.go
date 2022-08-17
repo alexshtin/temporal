@@ -76,6 +76,7 @@ import (
 	"go.temporal.io/server/service/history/replication"
 	"go.temporal.io/server/service/history/shard"
 	"go.temporal.io/server/service/history/tasks"
+	"go.temporal.io/server/service/history/vclock"
 	"go.temporal.io/server/service/history/workflow"
 	"go.temporal.io/server/service/worker/archiver"
 )
@@ -2058,11 +2059,15 @@ func (e *historyEngineImpl) UpdateWorkflow(
 		// Create a transfer task to schedule a workflow task
 		if !ms.HasPendingWorkflowTask() {
 			// This won't actually add event but will create WT which will get transient events
-			wt, err := ms.AddWorkflowTaskScheduledEvent(false)
+			wt, err := ms.AddWorkflowTaskScheduledEvent(true)
 			if err != nil {
 				return nil, err
 			}
 			u.SetScheduledWorkflowTaskEventID(wt.ScheduledEventID)
+			err = e.addWorkflowTaskToMatching(ctx, ms, wt, namespace.ID(request.GetNamespaceId()), request.GetRequest().GetWorkflowExecution())
+			if err != nil {
+				return nil, err
+			}
 		} else {
 			// If WT is already scheduled, don't use this one but wait for another one
 		}
@@ -2104,6 +2109,35 @@ func (e *historyEngineImpl) UpdateWorkflow(
 		scope.IncCounter(metrics.ConsistentQueryTimeoutCount)
 		return nil, ctx.Err()
 	}
+}
+
+func (e *historyEngineImpl) addWorkflowTaskToMatching(
+	ctx context.Context,
+	ms workflow.MutableState,
+	task *workflow.WorkflowTaskInfo,
+	nsID namespace.ID,
+	we *commonpb.WorkflowExecution,
+) error {
+	var taskScheduleToStartTimeout *time.Duration
+	if ms.GetExecutionInfo().TaskQueue != task.TaskQueue.GetName() {
+		taskScheduleToStartTimeout = ms.GetExecutionInfo().StickyScheduleToStartTimeout
+	} else {
+		taskScheduleToStartTimeout = ms.GetExecutionInfo().WorkflowRunTimeout
+	}
+
+	_, err := e.matchingClient.AddWorkflowTask(ctx, &matchingservice.AddWorkflowTaskRequest{
+		NamespaceId: nsID.String(),
+		Execution: &commonpb.WorkflowExecution{
+			WorkflowId: we.GetWorkflowId(),
+			RunId:      we.GetRunId(),
+		},
+		TaskQueue:              task.TaskQueue,
+		ScheduledEventId:       task.ScheduledEventID,
+		ScheduleToStartTimeout: taskScheduleToStartTimeout,
+		Clock:                  vclock.NewVectorClock(e.shard.GetClusterMetadata().GetClusterID(), e.shard.GetShardID(), task.ScheduledEventID),
+	})
+
+	return err
 }
 
 // RemoveSignalMutableState remove the signal request id in signal_requested for deduplicate

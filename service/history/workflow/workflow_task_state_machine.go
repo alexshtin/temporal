@@ -286,7 +286,7 @@ func (m *workflowTaskStateMachine) AddWorkflowTaskScheduledEventAsHeartbeat(
 	scheduledTime := m.ms.timeSource.Now().UTC()
 	attempt := m.ms.executionInfo.WorkflowTaskAttempt
 	startToCloseTimeout := m.getStartToCloseTimeout(m.ms.executionInfo.DefaultWorkflowTaskTimeout, attempt)
-	if attempt == 1 && m.ms.GetUpdateRegistry().Transient() != nil {
+	if attempt == 1 && m.ms.GetUpdateRegistry().Transient() == nil {
 		newWorkflowTaskEvent = m.ms.hBuilder.AddWorkflowTaskScheduledEvent(
 			taskQueue,
 			startToCloseTimeout,
@@ -427,12 +427,14 @@ func (m *workflowTaskStateMachine) AddWorkflowTaskStartedEvent(
 
 	m.emitWorkflowTaskAttemptStats(workflowTask.Attempt)
 
-	// TODO merge active & passive task generation
-	if err := m.ms.taskGenerator.GenerateStartWorkflowTaskTasks(
-		startTime, // start time is now
-		scheduledEventID,
-	); err != nil {
-		return nil, nil, err
+	if !hasTransientUpdateForCurrentWT {
+		// TODO merge active & passive task generation
+		if err := m.ms.taskGenerator.GenerateStartWorkflowTaskTasks(
+			startTime, // start time is now
+			scheduledEventID,
+		); err != nil {
+			return nil, nil, err
+		}
 	}
 	return event, workflowTask, err
 }
