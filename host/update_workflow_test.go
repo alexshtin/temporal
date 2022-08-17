@@ -37,7 +37,6 @@ import (
 	updatepb "go.temporal.io/api/update/v1"
 	"go.temporal.io/api/workflowservice/v1"
 
-	"go.temporal.io/server/common/payload"
 	"go.temporal.io/server/common/payloads"
 	"go.temporal.io/server/common/primitives/timestamp"
 )
@@ -53,9 +52,9 @@ func (s *integrationSuite) TestUpdateWorkflow() {
 
 	taskQueue := &taskqueuepb.TaskQueue{Name: tl}
 
-	header := &commonpb.Header{
-		Fields: map[string]*commonpb.Payload{"update header key": payload.EncodeString("update header value")},
-	}
+	// header := &commonpb.Header{
+	// 	Fields: map[string]*commonpb.Payload{"update header key": payload.EncodeString("update header value")},
+	// }
 
 	// Start workflow execution
 	request := &workflowservice.StartWorkflowExecutionRequest{
@@ -154,9 +153,9 @@ func (s *integrationSuite) TestUpdateWorkflow() {
 			},
 			FirstExecutionRunId: "",
 			Update: &updatepb.WorkflowUpdate{
-				Header: header,
-				Name:   "update_handler",
-				Args:   nil,
+				// Header: header,
+				Name: "update_handler",
+				Args: payloads.EncodeString("update args"),
 			},
 		})
 		s.NoError(err)
@@ -173,9 +172,9 @@ func (s *integrationSuite) TestUpdateWorkflow() {
 	s.False(workflowComplete)
 	s.True(updateEvent != nil)
 	s.Equal("update_handler", updateEvent.GetWorkflowUpdateRequestedEventAttributes().GetUpdate().GetName())
-	s.Equal(nil, updateEvent.GetWorkflowUpdateRequestedEventAttributes().GetUpdate().GetArgs())
-	s.Equal(header, updateEvent.GetWorkflowUpdateRequestedEventAttributes().GetHeader())
-	s.EqualValues(payloads.EncodeString("update success"), updateResult.Response.GetSuccess().GetPayloads())
+	s.EqualValues(payloads.EncodeString("update args"), updateEvent.GetWorkflowUpdateRequestedEventAttributes().GetUpdate().GetArgs())
+	// s.Equal(header, updateEvent.GetWorkflowUpdateRequestedEventAttributes().GetHeader())
+	s.EqualValues(payloads.EncodeString("update success"), updateResult.Response.GetSuccess())
 
 	// // Send another signal without RunID
 	// signalName := "another signal"

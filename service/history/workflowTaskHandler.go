@@ -1110,21 +1110,14 @@ func (handler *workflowTaskHandlerImpl) handleCommandCompleteWorkflowUpdate(
 		return err
 	}
 
-	transientUpdate := updateRegistry.Transient()
-	if transientUpdate != nil && transientUpdate.ID() == cmdAttrs.GetUpdateId() {
-		_, err = handler.mutableState.AddWorkflowUpdateRequestedEvent(transientUpdate.RequestID(), transientUpdate.Update(), transientUpdate.ID())
-		if err != nil {
-			return err
-		}
-		_, err = handler.mutableState.AddWorkflowUpdateCompletedEvent(cmdAttrs)
-		if err != nil {
-			return err
-		}
-		transientUpdate.SendResult(cmdAttrs.GetSuccess(), cmdAttrs.GetFailure())
-	}
-
 	pendingUpdate := updateRegistry.Pending(cmdAttrs.GetUpdateId())
 	if pendingUpdate != nil {
+		if pendingUpdate.Transient() {
+			_, err = handler.mutableState.AddWorkflowUpdateRequestedEvent(pendingUpdate.RequestID(), pendingUpdate.Update(), pendingUpdate.ID())
+			if err != nil {
+				return err
+			}
+		}
 		_, err = handler.mutableState.AddWorkflowUpdateCompletedEvent(cmdAttrs)
 		if err != nil {
 			return err
