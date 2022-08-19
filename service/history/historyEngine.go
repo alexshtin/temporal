@@ -2056,6 +2056,7 @@ func (e *historyEngineImpl) UpdateWorkflow(
 	}
 
 	if u.Transient() {
+		weCtx.GetReleaseFn()(nil)
 		// Create a transfer task to schedule a workflow task
 		if !ms.HasPendingWorkflowTask() {
 			// This won't actually add event but will create WT which will get transient events
