@@ -515,19 +515,24 @@ func (v *commandAttrValidator) validateCompleteWorkflowUpdateAttributes(
 	if cmdAttrs == nil {
 		return failedCause, serviceerror.NewInvalidArgument("SignalExternalWorkflowExecutionCommandAttributes is not set on command.")
 	}
-	if cmdAttrs.GetSuccess() == nil && cmdAttrs.GetFailure() == nil {
-		return failedCause, serviceerror.NewInvalidArgument("Both success and failure are nil on command.")
+	if cmdAttrs.GetUpdateId() == "" {
+		return failedCause, serviceerror.NewInvalidArgument("UpdateId is not set on command.")
 	}
-	if cmdAttrs.GetSuccess() != nil && cmdAttrs.GetFailure() != nil {
-		return failedCause, serviceerror.NewInvalidArgument("Both success and failure are not nil on command.")
+	return enumspb.WORKFLOW_TASK_FAILED_CAUSE_UNSPECIFIED, nil
+}
+
+func (v *commandAttrValidator) validateAcceptWorkflowUpdateAttributes(
+	nsID namespace.ID,
+	cmdAttrs *commandpb.AcceptWorkflowUpdateCommandAttributes,
+) (enumspb.WorkflowTaskFailedCause, error) {
+	const failedCause = enumspb.WORKFLOW_TASK_FAILED_CAUSE_BAD_SIGNAL_WORKFLOW_EXECUTION_ATTRIBUTES
+
+	if cmdAttrs == nil {
+		return failedCause, serviceerror.NewInvalidArgument("SignalExternalWorkflowExecutionCommandAttributes is not set on command.")
 	}
 	if cmdAttrs.GetUpdateId() == "" {
 		return failedCause, serviceerror.NewInvalidArgument("UpdateId is not set on command.")
 	}
-	if cmdAttrs.GetDurabilityPreference() == enumspb.WORKFLOW_UPDATE_DURABILITY_PREFERENCE_UNSPECIFIED {
-		return failedCause, serviceerror.NewInvalidArgument("Durability preferences is not set on command.")
-	}
-
 	return enumspb.WORKFLOW_TASK_FAILED_CAUSE_UNSPECIFIED, nil
 }
 
@@ -834,6 +839,7 @@ func (v *commandAttrValidator) validateCommandSequence(
 			enumspb.COMMAND_TYPE_SIGNAL_EXTERNAL_WORKFLOW_EXECUTION,
 			enumspb.COMMAND_TYPE_START_CHILD_WORKFLOW_EXECUTION,
 			enumspb.COMMAND_TYPE_UPSERT_WORKFLOW_SEARCH_ATTRIBUTES,
+			enumspb.COMMAND_TYPE_ACCEPT_WORKFLOW_UPDATE,
 			enumspb.COMMAND_TYPE_COMPLETE_WORKFLOW_UPDATE:
 			// noop
 		case enumspb.COMMAND_TYPE_CONTINUE_AS_NEW_WORKFLOW_EXECUTION,
@@ -842,7 +848,7 @@ func (v *commandAttrValidator) validateCommandSequence(
 			enumspb.COMMAND_TYPE_CANCEL_WORKFLOW_EXECUTION:
 			closeCommand = command.GetCommandType()
 		default:
-			return serviceerror.NewInvalidArgument(fmt.Sprintf("unable to validate command sequience: unknown command type: %v", command.GetCommandType()))
+			return serviceerror.NewInvalidArgument(fmt.Sprintf("unable to validate command sequence: unknown command type: %v", command.GetCommandType()))
 		}
 	}
 	return nil
