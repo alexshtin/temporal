@@ -225,6 +225,9 @@ func (handler *workflowTaskHandlerImpl) handleCommand(ctx context.Context, comma
 	case enumspb.COMMAND_TYPE_UPSERT_WORKFLOW_SEARCH_ATTRIBUTES:
 		return nil, handler.handleCommandUpsertWorkflowSearchAttributes(ctx, command.GetUpsertWorkflowSearchAttributesCommandAttributes())
 
+	case enumspb.COMMAND_TYPE_ACCEPT_WORKFLOW_UPDATE:
+		return nil, handler.handleCommandAcceptWorkflowUpdate(ctx, command.GetAcceptWorkflowUpdateCommandAttributes())
+
 	case enumspb.COMMAND_TYPE_COMPLETE_WORKFLOW_UPDATE:
 		return nil, handler.handleCommandCompleteWorkflowUpdate(ctx, command.GetCompleteWorkflowUpdateCommandAttributes())
 
@@ -1065,6 +1068,36 @@ func (handler *workflowTaskHandlerImpl) handleCommandUpsertWorkflowSearchAttribu
 		handler.workflowTaskCompletedID, attr,
 	)
 	return err
+}
+
+func (handler *workflowTaskHandlerImpl) handleCommandAcceptWorkflowUpdate(
+	ctx context.Context,
+	cmdAttrs *commandpb.AcceptWorkflowUpdateCommandAttributes,
+) error {
+	updateRegistry := handler.mutableState.GetUpdateRegistry()
+	if updateRegistry.Len() == 0 {
+		return nil
+	}
+	executionInfo := handler.mutableState.GetExecutionInfo()
+	nsID := namespace.ID(executionInfo.GetNamespaceId())
+
+	if err := handler.validateCommandAttr(
+		func() (enumspb.WorkflowTaskFailedCause, error) {
+			return handler.attrValidator.validateAcceptWorkflowUpdateAttributes(
+				nsID,
+				cmdAttrs,
+			)
+		},
+	); err != nil || handler.stopProcessing {
+		return err
+	}
+
+	pendingUpdate := updateRegistry.Pending(cmdAttrs.GetUpdateId())
+	if pendingUpdate != nil {
+		//todo
+	}
+
+	return nil
 }
 
 func (handler *workflowTaskHandlerImpl) handleCommandCompleteWorkflowUpdate(
