@@ -383,6 +383,8 @@ func (handler *workflowTaskHandlerCallbacksImpl) handleWorkflowTaskCompleted(
 	workflowTaskHeartbeating := request.GetForceCreateNewWorkflowTask() && len(request.Commands) == 0
 	var workflowTaskHeartbeatTimeout bool
 	var completedEvent *historypb.HistoryEvent
+	var responseMutations []workflowTaskResponseMutation
+
 	if workflowTaskHeartbeating {
 		namespace := namespaceEntry.Name()
 		timeout := handler.config.WorkflowTaskHeartbeatTimeout(namespace.String())
@@ -415,9 +417,8 @@ func (handler *workflowTaskHandlerCallbacksImpl) handleWorkflowTaskCompleted(
 		newMutableState             workflow.MutableState
 
 		hasUnhandledEvents bool
-		responseMutations  []workflowTaskResponseMutation
 	)
-	hasUnhandledEvents = ms.HasBufferedEvents()
+	hasUnhandledEvents = ms.HasBufferedEvents() || ms.GetInteractionRegistry().HasPending(request.GetCommands()...)
 
 	if request.StickyAttributes == nil || request.StickyAttributes.WorkerTaskQueue == nil {
 		handler.metricsClient.IncCounter(metrics.HistoryRespondWorkflowTaskCompletedScope, metrics.CompleteWorkflowTaskWithStickyDisabledCounter)
@@ -458,6 +459,7 @@ func (handler *workflowTaskHandlerCallbacksImpl) handleWorkflowTaskCompleted(
 			handler.config,
 			handler.shard,
 			handler.searchAttributesMapper,
+			hasUnhandledEvents,
 		)
 
 		if responseMutations, err = workflowTaskHandler.handleCommands(
@@ -518,10 +520,12 @@ func (handler *workflowTaskHandlerCallbacksImpl) handleWorkflowTaskCompleted(
 		if workflowTaskHeartbeating && !workflowTaskHeartbeatTimeout {
 			newWorkflowTask, err = ms.AddWorkflowTaskScheduledEventAsHeartbeat(
 				bypassTaskGeneration,
+				false, // Heartbeat WT is always non-transient
 				currentWorkflowTask.OriginalScheduledTime,
 			)
 		} else {
-			newWorkflowTask, err = ms.AddWorkflowTaskScheduledEvent(bypassTaskGeneration)
+			// Call HasPending because regular WT can create transient WT even from RespondWorkflowTaskCompleted.
+			newWorkflowTask, err = ms.AddWorkflowTaskScheduledEvent(bypassTaskGeneration, ms.GetInteractionRegistry().HasPending(request.GetCommands()...))
 		}
 		if err != nil {
 			return nil, err
@@ -603,6 +607,9 @@ func (handler *workflowTaskHandlerCallbacksImpl) handleWorkflowTaskCompleted(
 		return nil, updateErr
 	}
 
+	// Send interaction results to gRPC API callers.
+	handler.handlePendingInteractions(ms, req.GetCompleteRequest().GetCommands())
+
 	handler.handleBufferedQueries(ms, req.GetCompleteRequest().GetQueryResults(), createNewWorkflowTask, namespaceEntry, workflowTaskHeartbeating)
 
 	if workflowTaskHeartbeatTimeout {
@@ -629,9 +636,9 @@ func (handler *workflowTaskHandlerCallbacksImpl) handleWorkflowTaskCompleted(
 			return nil, err
 		}
 	}
+	resp.ResetHistoryEventId = ms.GetExecutionInfo().LastWorkflowTaskStartedEventId
 
 	return resp, nil
-
 }
 
 func (handler *workflowTaskHandlerCallbacksImpl) verifyFirstWorkflowTaskScheduled(
@@ -717,6 +724,12 @@ func (handler *workflowTaskHandlerCallbacksImpl) createRecordWorkflowTaskStarted
 			}
 			response.Queries[bufferedQueryID] = input
 		}
+	}
+
+	ir := ms.GetInteractionRegistry()
+	interactionInvocations := ir.PendingInvocations()
+	if len(interactionInvocations) > 0 {
+		response.Interactions = interactionInvocations
 	}
 
 	return response, nil
@@ -817,6 +830,31 @@ func (handler *workflowTaskHandlerCallbacksImpl) handleBufferedQueries(ms workfl
 			}
 		}
 	}
+}
+
+func (handler *workflowTaskHandlerCallbacksImpl) handlePendingInteractions(ms workflow.MutableState, commands []*commandpb.Command) {
+
+	interactionRegistry := ms.GetInteractionRegistry()
+	for _, command := range commands {
+		switch command.GetCommandType() {
+		case enumspb.COMMAND_TYPE_ACCEPT_WORKFLOW_UPDATE:
+			pendingInteraction := interactionRegistry.Pending(command.GetAcceptWorkflowUpdateCommandAttributes().GetMeta().GetId())
+			if pendingInteraction != nil {
+				pendingInteraction.Accept()
+			}
+		case enumspb.COMMAND_TYPE_COMPLETE_WORKFLOW_UPDATE:
+			pendingInteraction := interactionRegistry.Accepted(command.GetCompleteWorkflowUpdateCommandAttributes().GetMeta().GetId())
+			if pendingInteraction != nil {
+				pendingInteraction.SendComplete(command.GetCompleteWorkflowUpdateCommandAttributes().GetOutput())
+			}
+		case enumspb.COMMAND_TYPE_REJECT_WORKFLOW_UPDATE:
+			pendingInteraction := interactionRegistry.Pending(command.GetRejectWorkflowUpdateCommandAttributes().GetMeta().GetId())
+			if pendingInteraction != nil {
+				pendingInteraction.SendReject(command.GetRejectWorkflowUpdateCommandAttributes().GetFailure())
+			}
+		}
+	}
+
 }
 
 func failWorkflowTask(

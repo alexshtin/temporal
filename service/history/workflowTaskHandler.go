@@ -117,6 +117,7 @@ func newWorkflowTaskHandler(
 	config *configs.Config,
 	shard shard.Context,
 	searchAttributesMapper searchattribute.Mapper,
+	hasBufferedEvents bool,
 ) *workflowTaskHandlerImpl {
 
 	return &workflowTaskHandlerImpl{
@@ -124,7 +125,7 @@ func newWorkflowTaskHandler(
 		workflowTaskCompletedID: workflowTaskCompletedID,
 
 		// internal state
-		hasBufferedEvents:               mutableState.HasBufferedEvents(),
+		hasBufferedEvents:               hasBufferedEvents,
 		workflowTaskFailedCause:         nil,
 		activityNotStartedCancelled:     false,
 		newMutableState:                 nil,
@@ -229,6 +230,15 @@ func (handler *workflowTaskHandlerImpl) handleCommand(ctx context.Context, comma
 
 	case enumspb.COMMAND_TYPE_MODIFY_WORKFLOW_PROPERTIES:
 		return nil, handler.handleCommandModifyWorkflowProperties(ctx, command.GetModifyWorkflowPropertiesCommandAttributes())
+
+	case enumspb.COMMAND_TYPE_ACCEPT_WORKFLOW_UPDATE:
+		return nil, handler.handleCommandAcceptWorkflowUpdate(ctx, command.GetAcceptWorkflowUpdateCommandAttributes())
+
+	case enumspb.COMMAND_TYPE_COMPLETE_WORKFLOW_UPDATE:
+		return nil, handler.handleCommandCompleteWorkflowUpdate(ctx, command.GetCompleteWorkflowUpdateCommandAttributes())
+
+	case enumspb.COMMAND_TYPE_REJECT_WORKFLOW_UPDATE:
+		return nil, handler.handleCommandRejectWorkflowUpdate(ctx, command.GetRejectWorkflowUpdateCommandAttributes())
 
 	default:
 		return nil, serviceerror.NewInvalidArgument(fmt.Sprintf("Unknown command type: %v", command.GetCommandType()))
@@ -633,7 +643,7 @@ func (handler *workflowTaskHandlerImpl) handleCommandCancelTimer(
 	// which case we should reset hasBufferedEvents
 	// TODO deletion of timer fired event refreshing hasBufferedEvents
 	//  is not entirely correct, since during these commands processing, new event may appear
-	handler.hasBufferedEvents = handler.mutableState.HasBufferedEvents()
+	handler.hasBufferedEvents = handler.mutableState.HasBufferedEvents() || handler.mutableState.GetInteractionRegistry().HasPending()
 	return nil
 }
 
@@ -1137,6 +1147,121 @@ func (handler *workflowTaskHandlerImpl) handleCommandModifyWorkflowProperties(
 		handler.workflowTaskCompletedID, attr,
 	)
 	return err
+}
+
+func (handler *workflowTaskHandlerImpl) handleCommandAcceptWorkflowUpdate(
+	_ context.Context,
+	cmdAttrs *commandpb.AcceptWorkflowUpdateCommandAttributes,
+) error {
+	executionInfo := handler.mutableState.GetExecutionInfo()
+	nsID := namespace.ID(executionInfo.GetNamespaceId())
+
+	if err := handler.validateCommandAttr(
+		func() (enumspb.WorkflowTaskFailedCause, error) {
+			return handler.attrValidator.validateAcceptWorkflowUpdateAttributes(
+				nsID,
+				cmdAttrs,
+			)
+		},
+	); err != nil || handler.stopProcessing {
+		return err
+	}
+
+	_, err := handler.mutableState.AddWorkflowUpdateAcceptedEvent(cmdAttrs)
+	if err != nil {
+		// TODO: what to do here?
+		return err
+	}
+
+	return nil
+}
+
+func (handler *workflowTaskHandlerImpl) handleCommandCompleteWorkflowUpdate(
+	_ context.Context,
+	cmdAttrs *commandpb.CompleteWorkflowUpdateCommandAttributes,
+) error {
+
+	// handler.metricsClient.IncCounter(
+	// 	metrics.HistoryRespondWorkflowTaskCompletedScope,
+	// 	metrics.CommandTypeSignalExternalWorkflowCounter,
+	// )
+
+	executionInfo := handler.mutableState.GetExecutionInfo()
+	nsID := namespace.ID(executionInfo.GetNamespaceId())
+	// nsName, err := handler.namespaceRegistry.GetNamespaceName(nsID)
+	// if err != nil {
+	// 	return err
+	// }
+
+	if err := handler.sizeLimitChecker.checkIfPayloadSizeExceedsLimit(
+		metrics.CommandTypeTag(enumspb.COMMAND_TYPE_COMPLETE_WORKFLOW_UPDATE.String()),
+		cmdAttrs.GetOutput().GetResult().Size(),
+		"CompleteWorkflowUpdateCommandAttributes.Result exceeds size limit.",
+	); err != nil {
+		// TODO: better enum
+		return handler.failWorkflow(enumspb.WORKFLOW_TASK_FAILED_CAUSE_BAD_FAIL_WORKFLOW_EXECUTION_ATTRIBUTES, err)
+	}
+
+	if err := handler.validateCommandAttr(
+		func() (enumspb.WorkflowTaskFailedCause, error) {
+			return handler.attrValidator.validateCompleteWorkflowUpdateAttributes(
+				nsID,
+				cmdAttrs,
+			)
+		},
+	); err != nil || handler.stopProcessing {
+		return err
+	}
+
+	_, err := handler.mutableState.AddWorkflowUpdateCompletedEvent(cmdAttrs)
+	if err != nil {
+		// TODO: what to do here?
+		return err
+	}
+
+	return nil
+}
+
+func (handler *workflowTaskHandlerImpl) handleCommandRejectWorkflowUpdate(
+	_ context.Context,
+	cmdAttrs *commandpb.RejectWorkflowUpdateCommandAttributes,
+) error {
+
+	// handler.metricsClient.IncCounter(
+	// 	metrics.HistoryRespondWorkflowTaskCompletedScope,
+	// 	metrics.CommandTypeRejectWorkflowUpdate,
+	// )
+
+	executionInfo := handler.mutableState.GetExecutionInfo()
+	nsID := namespace.ID(executionInfo.GetNamespaceId())
+
+	if err := handler.sizeLimitChecker.checkIfPayloadSizeExceedsLimit(
+		metrics.CommandTypeTag(enumspb.COMMAND_TYPE_COMPLETE_WORKFLOW_UPDATE.String()),
+		cmdAttrs.GetFailure().Size(),
+		"RejectWorkflowUpdateCommandAttributes.Failure exceeds size limit.",
+	); err != nil {
+		// TODO: better enum
+		return handler.failWorkflow(enumspb.WORKFLOW_TASK_FAILED_CAUSE_BAD_FAIL_WORKFLOW_EXECUTION_ATTRIBUTES, err)
+	}
+
+	if err := handler.validateCommandAttr(
+		func() (enumspb.WorkflowTaskFailedCause, error) {
+			return handler.attrValidator.validateRejectWorkflowUpdateAttributes(
+				nsID,
+				cmdAttrs,
+			)
+		},
+	); err != nil || handler.stopProcessing {
+		return err
+	}
+
+	err := handler.mutableState.RejectWorkflowUpdate(cmdAttrs)
+	if err != nil {
+		// TODO: what? fail workflow or WT?
+		return err
+	}
+
+	return nil
 }
 
 func payloadsMapSize(fields map[string]*commonpb.Payload) int {

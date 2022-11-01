@@ -465,6 +465,64 @@ func (v *commandAttrValidator) validateSignalExternalWorkflowExecutionAttributes
 	return enumspb.WORKFLOW_TASK_FAILED_CAUSE_UNSPECIFIED, nil
 }
 
+func (v *commandAttrValidator) validateAcceptWorkflowUpdateAttributes(
+	nsID namespace.ID,
+	cmdAttrs *commandpb.AcceptWorkflowUpdateCommandAttributes,
+) (enumspb.WorkflowTaskFailedCause, error) {
+	const failedCause = enumspb.WORKFLOW_TASK_FAILED_CAUSE_BAD_SIGNAL_WORKFLOW_EXECUTION_ATTRIBUTES
+
+	// TODO: add better validation here
+	if cmdAttrs == nil {
+		return failedCause, serviceerror.NewInvalidArgument("AcceptWorkflowUpdateCommandAttributes is not set on command.")
+	}
+	if cmdAttrs.GetMeta() == nil {
+		return failedCause, serviceerror.NewInvalidArgument("Meta data is not set on AcceptWorkflowUpdateCommand.")
+	}
+	if cmdAttrs.GetMeta().GetId() == "" {
+		return failedCause, serviceerror.NewInvalidArgument("Interaction Id is not set on AcceptWorkflowUpdateCommand.")
+	}
+	return enumspb.WORKFLOW_TASK_FAILED_CAUSE_UNSPECIFIED, nil
+}
+
+func (v *commandAttrValidator) validateCompleteWorkflowUpdateAttributes(
+	namespaceID namespace.ID,
+	cmdAttrs *commandpb.CompleteWorkflowUpdateCommandAttributes,
+) (enumspb.WorkflowTaskFailedCause, error) {
+
+	const failedCause = enumspb.WORKFLOW_TASK_FAILED_CAUSE_BAD_SIGNAL_WORKFLOW_EXECUTION_ATTRIBUTES
+
+	// TODO: add better validation here
+	if cmdAttrs == nil {
+		return failedCause, serviceerror.NewInvalidArgument("CompleteWorkflowUpdateCommandAttributes is not set on command.")
+	}
+	if cmdAttrs.GetMeta() == nil {
+		return failedCause, serviceerror.NewInvalidArgument("Meta data is not set on CompleteWorkflowUpdateCommand.")
+	}
+	if cmdAttrs.GetMeta().GetId() == "" {
+		return failedCause, serviceerror.NewInvalidArgument("Interaction Id is not set on CompleteWorkflowUpdateCommand.")
+	}
+	return enumspb.WORKFLOW_TASK_FAILED_CAUSE_UNSPECIFIED, nil
+}
+
+func (v *commandAttrValidator) validateRejectWorkflowUpdateAttributes(
+	nsID namespace.ID,
+	cmdAttrs *commandpb.RejectWorkflowUpdateCommandAttributes,
+) (enumspb.WorkflowTaskFailedCause, error) {
+	const failedCause = enumspb.WORKFLOW_TASK_FAILED_CAUSE_BAD_SIGNAL_WORKFLOW_EXECUTION_ATTRIBUTES
+
+	// TODO: add better validation here
+	if cmdAttrs == nil {
+		return failedCause, serviceerror.NewInvalidArgument("AcceptWorkflowUpdateCommandAttributes is not set on command.")
+	}
+	if cmdAttrs.GetMeta() == nil {
+		return failedCause, serviceerror.NewInvalidArgument("Meta data is not set on RejectWorkflowUpdateCommand.")
+	}
+	if cmdAttrs.GetMeta().GetId() == "" {
+		return failedCause, serviceerror.NewInvalidArgument("Interaction Id is not set on RejectWorkflowUpdateCommand.")
+	}
+	return enumspb.WORKFLOW_TASK_FAILED_CAUSE_UNSPECIFIED, nil
+}
+
 func (v *commandAttrValidator) validateUpsertWorkflowSearchAttributes(
 	namespace namespace.Name,
 	attributes *commandpb.UpsertWorkflowSearchAttributesCommandAttributes,
@@ -794,7 +852,10 @@ func (v *commandAttrValidator) validateCommandSequence(
 			enumspb.COMMAND_TYPE_SIGNAL_EXTERNAL_WORKFLOW_EXECUTION,
 			enumspb.COMMAND_TYPE_START_CHILD_WORKFLOW_EXECUTION,
 			enumspb.COMMAND_TYPE_UPSERT_WORKFLOW_SEARCH_ATTRIBUTES,
-			enumspb.COMMAND_TYPE_MODIFY_WORKFLOW_PROPERTIES:
+			enumspb.COMMAND_TYPE_MODIFY_WORKFLOW_PROPERTIES,
+			enumspb.COMMAND_TYPE_ACCEPT_WORKFLOW_UPDATE,
+			enumspb.COMMAND_TYPE_COMPLETE_WORKFLOW_UPDATE,
+			enumspb.COMMAND_TYPE_REJECT_WORKFLOW_UPDATE:
 			// noop
 		case enumspb.COMMAND_TYPE_CONTINUE_AS_NEW_WORKFLOW_EXECUTION,
 			enumspb.COMMAND_TYPE_COMPLETE_WORKFLOW_EXECUTION,

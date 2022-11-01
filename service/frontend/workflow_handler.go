@@ -943,16 +943,19 @@ func (wh *WorkflowHandler) RespondWorkflowTaskCompleted(
 	}
 	namespaceId := namespace.ID(taskToken.GetNamespaceId())
 
-	histResp, err := wh.historyClient.RespondWorkflowTaskCompleted(ctx, &historyservice.RespondWorkflowTaskCompletedRequest{
-		NamespaceId:     namespaceId.String(),
-		CompleteRequest: request},
+	histResp, err := wh.historyClient.RespondWorkflowTaskCompleted(ctx,
+		&historyservice.RespondWorkflowTaskCompletedRequest{
+			NamespaceId:     namespaceId.String(),
+			CompleteRequest: request,
+		},
 	)
 	if err != nil {
 		return nil, err
 	}
 
 	completedResp := &workflowservice.RespondWorkflowTaskCompletedResponse{
-		ActivityTasks: histResp.ActivityTasks,
+		ActivityTasks:       histResp.ActivityTasks,
+		ResetHistoryEventId: histResp.ResetHistoryEventId,
 	}
 	if request.GetReturnNewWorkflowTask() && histResp != nil && histResp.StartedResponse != nil {
 		taskToken := &tokenspb.Task{
@@ -4396,6 +4399,7 @@ func (wh *WorkflowHandler) createPollWorkflowTaskQueueResponse(
 		ScheduledTime:              matchingResp.ScheduledTime,
 		StartedTime:                matchingResp.StartedTime,
 		Queries:                    matchingResp.Queries,
+		Interactions:               matchingResp.Interactions,
 	}
 
 	return resp, nil

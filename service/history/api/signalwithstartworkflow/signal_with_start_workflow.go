@@ -286,7 +286,8 @@ func signalWorkflow(
 
 	// Create a transfer task to schedule a workflow task
 	if !mutableState.HasPendingWorkflowTask() {
-		_, err := mutableState.AddWorkflowTaskScheduledEvent(false)
+		// Signal needs non-transient WT.
+		_, err := mutableState.AddWorkflowTaskScheduledEvent(false, false)
 		if err != nil {
 			return err
 		}

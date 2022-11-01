@@ -466,6 +466,30 @@ func (b *HistoryBuilder) AddWorkflowExecutionTerminatedEvent(
 	return b.appendEvents(event)
 }
 
+func (b *HistoryBuilder) AddWorkflowUpdateAcceptedEvent(cmdAttrs *commandpb.AcceptWorkflowUpdateCommandAttributes) *historypb.HistoryEvent {
+	event := b.createNewHistoryEvent(enumspb.EVENT_TYPE_WORKFLOW_UPDATE_ACCEPTED, b.timeSource.Now())
+	event.Attributes = &historypb.HistoryEvent_WorkflowUpdateAcceptedEventAttributes{
+		WorkflowUpdateAcceptedEventAttributes: &historypb.WorkflowUpdateAcceptedEventAttributes{
+			Meta:  cmdAttrs.GetMeta(),
+			Input: cmdAttrs.GetInput(),
+		},
+	}
+	return b.appendEvents(event)
+}
+
+func (b *HistoryBuilder) AddWorkflowUpdateCompletedEvent(
+	cmdAttrs *commandpb.CompleteWorkflowUpdateCommandAttributes,
+) *historypb.HistoryEvent {
+	event := b.createNewHistoryEvent(enumspb.EVENT_TYPE_WORKFLOW_UPDATE_COMPLETED, b.timeSource.Now())
+	event.Attributes = &historypb.HistoryEvent_WorkflowUpdateCompletedEventAttributes{
+		WorkflowUpdateCompletedEventAttributes: &historypb.WorkflowUpdateCompletedEventAttributes{
+			Meta:   cmdAttrs.GetMeta(),
+			Output: cmdAttrs.GetOutput(),
+		},
+	}
+	return b.appendEvents(event)
+}
+
 func (b *HistoryBuilder) AddContinuedAsNewEvent(
 	workflowTaskCompletedEventID int64,
 	newRunID string,

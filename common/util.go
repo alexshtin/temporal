@@ -450,6 +450,7 @@ func CreateMatchingPollWorkflowTaskQueueResponse(historyResponse *historyservice
 		ScheduledTime:              historyResponse.ScheduledTime,
 		StartedTime:                historyResponse.StartedTime,
 		Queries:                    historyResponse.Queries,
+		Interactions:               historyResponse.Interactions,
 	}
 
 	return matchingResp

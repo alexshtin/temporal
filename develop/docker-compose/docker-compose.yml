@@ -38,6 +38,8 @@ services:
   elasticsearch:
     image: elasticsearch:7.10.1
     container_name: temporal-dev-elasticsearch
+    volumes:
+      - .:/usr/share/elasticsearch/config/elasticsearch.yml
     ports:
       - "9200:9200"
     environment:

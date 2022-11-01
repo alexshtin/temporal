@@ -47,6 +47,7 @@ import (
 	"go.temporal.io/server/api/historyservice/v1"
 	persistencespb "go.temporal.io/server/api/persistence/v1"
 	workflowspb "go.temporal.io/server/api/workflow/v1"
+	"go.temporal.io/server/service/history/workflow/interaction"
 
 	"go.temporal.io/server/common"
 	"go.temporal.io/server/common/backoff"
@@ -170,6 +171,7 @@ type (
 		taskGenerator       TaskGenerator
 		workflowTaskManager *workflowTaskStateMachine
 		QueryRegistry       QueryRegistry
+		InteractionRegistry interaction.Registry
 
 		shard           shard.Context
 		clusterMetadata cluster.Metadata
@@ -228,7 +230,8 @@ func NewMutableState(
 		appliedEvents:    make(map[string]struct{}),
 		InsertTasks:      make(map[tasks.Category][]tasks.Task),
 
-		QueryRegistry: NewQueryRegistry(),
+		QueryRegistry:       NewQueryRegistry(),
+		InteractionRegistry: interaction.NewRegistry(),
 
 		shard:           shard,
 		clusterMetadata: shard.GetClusterMetadata(),
@@ -607,6 +610,19 @@ func (e *MutableStateImpl) IsStickyTaskQueueEnabled() bool {
 	return e.executionInfo.StickyTaskQueue != ""
 }
 
+func (e *MutableStateImpl) TaskQueue() *taskqueuepb.TaskQueue {
+	if e.IsStickyTaskQueueEnabled() {
+		return &taskqueuepb.TaskQueue{
+			Name: e.executionInfo.StickyTaskQueue,
+			Kind: enumspb.TASK_QUEUE_KIND_STICKY,
+		}
+	}
+	return &taskqueuepb.TaskQueue{
+		Name: e.executionInfo.TaskQueue,
+		Kind: enumspb.TASK_QUEUE_KIND_NORMAL,
+	}
+}
+
 func (e *MutableStateImpl) GetWorkflowType() *commonpb.WorkflowType {
 	wType := &commonpb.WorkflowType{}
 	wType.Name = e.executionInfo.WorkflowTypeName
@@ -616,6 +632,10 @@ func (e *MutableStateImpl) GetWorkflowType() *commonpb.WorkflowType {
 
 func (e *MutableStateImpl) GetQueryRegistry() QueryRegistry {
 	return e.QueryRegistry
+}
+
+func (e *MutableStateImpl) GetInteractionRegistry() interaction.Registry {
+	return e.InteractionRegistry
 }
 
 func (e *MutableStateImpl) GetActivityScheduledEvent(
@@ -1282,11 +1302,7 @@ func (e *MutableStateImpl) GetInFlightWorkflowTask() (*WorkflowTaskInfo, bool) {
 }
 
 func (e *MutableStateImpl) HasTransientWorkflowTask() bool {
-	workflowTask, ok := e.GetInFlightWorkflowTask()
-	if !ok {
-		return false
-	}
-	return workflowTask.ScheduledEventID >= e.GetNextEventID()
+	return e.executionInfo.WorkflowTaskScheduledEventId >= e.GetNextEventID()
 }
 
 func (e *MutableStateImpl) ClearTransientWorkflowTask() error {
@@ -1690,24 +1706,26 @@ func (e *MutableStateImpl) AddFirstWorkflowTaskScheduled(
 
 func (e *MutableStateImpl) AddWorkflowTaskScheduledEvent(
 	bypassTaskGeneration bool,
+	hasPendingInteractions bool,
 ) (*WorkflowTaskInfo, error) {
 	opTag := tag.WorkflowActionWorkflowTaskScheduled
 	if err := e.checkMutability(opTag); err != nil {
 		return nil, err
 	}
-	return e.workflowTaskManager.AddWorkflowTaskScheduledEvent(bypassTaskGeneration)
+	return e.workflowTaskManager.AddWorkflowTaskScheduledEvent(bypassTaskGeneration, hasPendingInteractions)
 }
 
 // AddWorkflowTaskScheduledEventAsHeartbeat is to record the first WorkflowTaskScheduledEvent during workflow task heartbeat.
 func (e *MutableStateImpl) AddWorkflowTaskScheduledEventAsHeartbeat(
 	bypassTaskGeneration bool,
+	hasPendingInteractions bool,
 	originalScheduledTimestamp *time.Time,
 ) (*WorkflowTaskInfo, error) {
 	opTag := tag.WorkflowActionWorkflowTaskScheduled
 	if err := e.checkMutability(opTag); err != nil {
 		return nil, err
 	}
-	return e.workflowTaskManager.AddWorkflowTaskScheduledEventAsHeartbeat(bypassTaskGeneration, originalScheduledTimestamp)
+	return e.workflowTaskManager.AddWorkflowTaskScheduledEventAsHeartbeat(bypassTaskGeneration, hasPendingInteractions, originalScheduledTimestamp)
 }
 
 func (e *MutableStateImpl) ReplicateTransientWorkflowTaskScheduled() (*WorkflowTaskInfo, error) {
@@ -1755,6 +1773,9 @@ func (e *MutableStateImpl) CreateTransientWorkflowTask(
 	workflowTask *WorkflowTaskInfo,
 	identity string,
 ) *historyspb.TransientWorkflowTaskInfo {
+	if !e.HasTransientWorkflowTask() {
+		return nil
+	}
 	return e.workflowTaskManager.CreateTransientWorkflowTaskEvents(workflowTask, identity)
 }
 
@@ -3108,6 +3129,29 @@ func (e *MutableStateImpl) AddWorkflowExecutionTerminatedEvent(
 		return nil, err
 	}
 	return event, nil
+}
+
+func (e *MutableStateImpl) AddWorkflowUpdateAcceptedEvent(cmdAttrs *commandpb.AcceptWorkflowUpdateCommandAttributes) (*historypb.HistoryEvent, error) {
+	// if err := e.checkMutability(tag.WorkflowActionUpdateAccepted); err != nil {
+	// 	return nil, err
+	// }
+	event := e.hBuilder.AddWorkflowUpdateAcceptedEvent(cmdAttrs)
+	// todo: replicate
+	return event, nil
+}
+
+func (e *MutableStateImpl) AddWorkflowUpdateCompletedEvent(cmdAttrs *commandpb.CompleteWorkflowUpdateCommandAttributes) (*historypb.HistoryEvent, error) {
+	// if err := e.checkMutability(tag.WorkflowActionUpdateRejected); err != nil {
+	// 	return nil, err
+	// }
+	event := e.hBuilder.AddWorkflowUpdateCompletedEvent(cmdAttrs)
+	// todo: replicate
+	return event, nil
+}
+
+func (e *MutableStateImpl) RejectWorkflowUpdate(cmdAttrs *commandpb.RejectWorkflowUpdateCommandAttributes) error {
+	// TODO: ?
+	return nil
 }
 
 func (e *MutableStateImpl) ReplicateWorkflowExecutionTerminatedEvent(

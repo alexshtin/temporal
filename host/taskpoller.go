@@ -57,6 +57,8 @@ type (
 
 	queryHandler func(task *workflowservice.PollWorkflowTaskQueueResponse) (*commonpb.Payloads, error)
 
+	interactionHandler func(task *workflowservice.PollWorkflowTaskQueueResponse) ([]*commandpb.Command, error)
+
 	// TaskPoller is used in integration tests to poll workflow or activity task queues.
 	TaskPoller struct {
 		Engine                       FrontendClient
@@ -68,6 +70,7 @@ type (
 		WorkflowTaskHandler          workflowTaskHandler
 		ActivityTaskHandler          activityTaskHandler
 		QueryHandler                 queryHandler
+		InteractionHandler           interactionHandler
 		Logger                       log.Logger
 		T                            *testing.T
 	}
@@ -242,6 +245,21 @@ Loop:
 		}
 
 		var commands []*commandpb.Command
+		// handle interactions
+		if len(response.Interactions) > 0 {
+			interactionCommands, err := p.InteractionHandler(response)
+			if err != nil {
+				p.Logger.Error("Failing workflow task. Workflow interaction handler failed with error", tag.Error(err))
+				_, err = p.Engine.RespondWorkflowTaskFailed(NewContext(), &workflowservice.RespondWorkflowTaskFailedRequest{
+					TaskToken: response.TaskToken,
+					Cause:     enumspb.WORKFLOW_TASK_FAILED_CAUSE_WORKFLOW_WORKER_UNHANDLED_FAILURE,
+					Failure:   newApplicationFailure(err, false, nil),
+					Identity:  p.Identity,
+				})
+				return false, nil, err
+			}
+			commands = append(commands, interactionCommands...)
+		}
 
 		// handle normal workflow task / non query task response
 		var lastWorkflowTaskScheduleEvent *historypb.HistoryEvent
@@ -325,6 +343,21 @@ func (p *TaskPoller) HandlePartialWorkflowTask(response *workflowservice.PollWor
 	}
 
 	var commands []*commandpb.Command
+	// handle interactions
+	if len(response.Interactions) > 0 {
+		interactionCommands, err := p.InteractionHandler(response)
+		if err != nil {
+			p.Logger.Error("Failing workflow task. Workflow interaction handler failed with error", tag.Error(err))
+			_, err = p.Engine.RespondWorkflowTaskFailed(NewContext(), &workflowservice.RespondWorkflowTaskFailedRequest{
+				TaskToken: response.TaskToken,
+				Cause:     enumspb.WORKFLOW_TASK_FAILED_CAUSE_WORKFLOW_WORKER_UNHANDLED_FAILURE,
+				Failure:   newApplicationFailure(err, false, nil),
+				Identity:  p.Identity,
+			})
+			return nil, err
+		}
+		commands = append(commands, interactionCommands...)
+	}
 
 	wtCommands, err := p.WorkflowTaskHandler(response.WorkflowExecution, response.WorkflowType,
 		response.PreviousStartedEventId, response.StartedEventId, response.History)

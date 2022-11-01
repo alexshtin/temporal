@@ -32,7 +32,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 	commonpb "go.temporal.io/api/common/v1"
 	historypb "go.temporal.io/api/history/v1"
-	"go.temporal.io/api/serviceerror"
+	"go.temporal.io/api/workflowservice/v1"
 
 	"go.temporal.io/server/api/historyservice/v1"
 	"go.temporal.io/server/api/matchingservice/v1"
@@ -84,6 +84,7 @@ import (
 	"go.temporal.io/server/service/history/replication"
 	"go.temporal.io/server/service/history/shard"
 	"go.temporal.io/server/service/history/tasks"
+	"go.temporal.io/server/service/history/vclock"
 	"go.temporal.io/server/service/history/workflow"
 	"go.temporal.io/server/service/worker/archiver"
 )
@@ -616,11 +617,103 @@ func (e *historyEngineImpl) SignalWithStartWorkflowExecution(
 	return signalwithstartworkflow.Invoke(ctx, req, e.shard, e.workflowConsistencyChecker)
 }
 
-func (h *historyEngineImpl) UpdateWorkflow(
+func (e *historyEngineImpl) UpdateWorkflow(
 	ctx context.Context,
 	request *historyservice.UpdateWorkflowRequest,
-) (*historyservice.UpdateWorkflowResponse, error) {
-	return nil, serviceerror.NewUnimplemented("UpdateWorkflow is not supported on this server")
+) (_ *historyservice.UpdateWorkflowResponse, retErr error) {
+
+	workflowKey := definition.NewWorkflowKey(
+		request.NamespaceId,
+		request.Request.WorkflowExecution.WorkflowId,
+		request.Request.WorkflowExecution.RunId,
+	)
+	weCtx, err := e.workflowConsistencyChecker.GetWorkflowContext(
+		ctx,
+		nil,
+		api.BypassMutableStateConsistencyPredicate,
+		workflowKey,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { weCtx.GetReleaseFn()(retErr) }()
+
+	ms := weCtx.GetMutableState()
+	if !ms.IsWorkflowExecutionRunning() {
+		return nil, consts.ErrWorkflowCompleted
+	}
+
+	req := request.GetRequest()
+	interactionRegistry := ms.GetInteractionRegistry()
+	// TODO (alex): GetNextEventID is wrong here it should be computed at dispatch time.
+	inter, removeFn := interactionRegistry.Add(req.GetInput(), req.GetRequestId(), e.timeSource.Now(), ms.GetNextEventID()-1)
+	defer removeFn()
+
+	// 1. Create WT
+	// 2. Set WT to MS
+	// 3. Call addWorkflowTaskToMatching
+	// 4. Block on interaction results
+	// 5. Return results
+
+	// Create a transfer task to schedule a workflow task
+	if !ms.HasPendingWorkflowTask() {
+		// This won't actually add event but will create WT which will get transient events
+		wt, err := ms.AddWorkflowTaskScheduledEvent(true, true)
+		if err != nil {
+			return nil, err
+		}
+		err = e.addWorkflowTaskToMatching(ctx, ms, wt, namespace.ID(request.GetNamespaceId()), request.GetRequest().GetWorkflowExecution())
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		// If WT is already scheduled, don't use this one but wait for another one
+	}
+
+	weCtx.GetReleaseFn()(nil)
+
+	out, err := inter.WaitResult(ctx)
+	if err != nil {
+		return nil, err
+	}
+	resp := &historyservice.UpdateWorkflowResponse{
+		Response: &workflowservice.UpdateWorkflowResponse{
+			// UpdateToken: todo
+			Output: out,
+		},
+	}
+
+	return resp, nil
+}
+
+// TODO: move to a better place
+func (e *historyEngineImpl) addWorkflowTaskToMatching(
+	ctx context.Context,
+	ms workflow.MutableState,
+	task *workflow.WorkflowTaskInfo,
+	nsID namespace.ID,
+	we *commonpb.WorkflowExecution,
+) error {
+	var taskScheduleToStartTimeout *time.Duration
+	if ms.GetExecutionInfo().TaskQueue != task.TaskQueue.GetName() {
+		taskScheduleToStartTimeout = ms.GetExecutionInfo().StickyScheduleToStartTimeout
+	} else {
+		taskScheduleToStartTimeout = ms.GetExecutionInfo().WorkflowRunTimeout
+	}
+
+	_, err := e.matchingClient.AddWorkflowTask(ctx, &matchingservice.AddWorkflowTaskRequest{
+		NamespaceId: nsID.String(),
+		Execution: &commonpb.WorkflowExecution{
+			WorkflowId: we.GetWorkflowId(),
+			RunId:      we.GetRunId(),
+		},
+		TaskQueue:              task.TaskQueue,
+		ScheduledEventId:       task.ScheduledEventID,
+		ScheduleToStartTimeout: taskScheduleToStartTimeout,
+		Clock:                  vclock.NewVectorClock(e.shard.GetClusterMetadata().GetClusterID(), e.shard.GetShardID(), task.ScheduledEventID),
+	})
+
+	return err
 }
 
 // RemoveSignalMutableState remove the signal request id in signal_requested for deduplicate
