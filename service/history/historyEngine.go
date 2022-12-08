@@ -662,6 +662,7 @@ func (e *historyEngineImpl) UpdateWorkflow(
 		if err != nil {
 			return nil, err
 		}
+		weCtx.GetReleaseFn()(nil)
 		err = e.addWorkflowTaskToMatching(ctx, ms, wt, namespace.ID(request.GetNamespaceId()), request.GetRequest().GetWorkflowExecution())
 		if err != nil {
 			return nil, err
