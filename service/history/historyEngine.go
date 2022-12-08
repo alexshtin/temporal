@@ -702,11 +702,12 @@ func (e *historyEngineImpl) addWorkflowTaskToMatching(
 		taskScheduleToStartTimeout = ms.GetExecutionInfo().WorkflowRunTimeout
 	}
 
+	wfkey := ms.GetWorkflowKey()
 	_, err := e.matchingClient.AddWorkflowTask(ctx, &matchingservice.AddWorkflowTaskRequest{
 		NamespaceId: nsID.String(),
 		Execution: &commonpb.WorkflowExecution{
-			WorkflowId: we.GetWorkflowId(),
-			RunId:      we.GetRunId(),
+			WorkflowId: wfkey.WorkflowID,
+			RunId:      wfkey.RunID,
 		},
 		TaskQueue:              task.TaskQueue,
 		ScheduledEventId:       task.ScheduledEventID,
