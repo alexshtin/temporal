@@ -627,9 +627,9 @@ func (m *workflowTaskStateMachine) skipWorkflowTaskCompletedEvent(workflowTaskTy
 	//   --> NextEventID points here because it doesn't move for speculative WFT.
 	// In this case difference between NextEventID and LastCompletedWorkflowTaskStartedEventId is 2.
 	// If there are other events after WFTCompleted event, then difference is > 2 and speculative WFT can't be dropped.
-	if m.ms.GetNextEventID() != m.ms.GetLastCompletedWorkflowTaskStartedEventId()+2 {
-		return false
-	}
+	// if m.ms.GetNextEventID() != m.ms.GetLastCompletedWorkflowTaskStartedEventId()+2 {
+	// 	return false
+	// }
 
 	for _, message := range request.Messages {
 		if !message.GetBody().MessageIs((*updatepb.Rejection)(nil)) {
